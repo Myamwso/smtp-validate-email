@@ -15,6 +15,7 @@
             "email": "huangjie@ymify.com"
         }
     ],
+	"minimum-stability": "dev",
     "require": {
         "php": ">=5.6"
     },
@@ -33,6 +34,5 @@
       "psr-4": {
         "SMTPValidateEmail\\Tests\\": "tests"
       }
-    },
-	"minimum-stability": "dev"
+    }
 }
