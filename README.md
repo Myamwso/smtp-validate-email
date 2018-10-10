@@ -1,5 +1,5 @@
 # SMTP\_Validate\_Email
-
+#test
 
 [![PHP Version](https://img.shields.io/badge/php-5.6%2B-blue.svg?style=flat-square)](https://packagist.org/packages/zytzagoo/smtp-validate-email)
 [![Software License](https://img.shields.io/badge/license-gpl3%2B-brightgreen.svg?style=flat-square)](LICENSE.txt)
