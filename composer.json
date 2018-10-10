@@ -33,5 +33,6 @@
       "psr-4": {
         "SMTPValidateEmail\\Tests\\": "tests"
       }
-    }
+    },
+	"minimum-stability": "dev"
 }
