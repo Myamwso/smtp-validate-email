@@ -1086,7 +1086,7 @@ class Validator
      * Redis白名单丢失，从数据库白名单所有的mx记录导进缓存
      * @param WhiteList $whiteList
      */
-    public function initRedisData(WhiteList $whiteList)
+    public function initRedisData()
     {
         $redis = new Redis();
         $white = "mailsys:mail_testwhite_aa";
