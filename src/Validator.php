@@ -2,6 +2,8 @@
 
 namespace SMTPValidateEmail;
 
+use App\WhiteList;
+use Illuminate\Support\Facades\DB;
 use \SMTPValidateEmail\Exceptions\Exception as Exception;
 use \SMTPValidateEmail\Exceptions\Timeout as TimeoutException;
 use \SMTPValidateEmail\Exceptions\NoTimeout as NoTimeoutException;
@@ -253,7 +255,7 @@ class Validator
      * @param string|null $sender Sender email address
      * @return array List of emails and their results
      */
-    public function validate($emails = [], $sender = null)
+    public function validate(WhiteList $whiteList,$emails = [], $sender = null)
     {
         $redis = new Redis();
         $this->results = [];
@@ -269,12 +271,23 @@ class Validator
             return $this->results;
         }
 
-
         // Query the MTAs on each domain if we have them
         foreach ($this->domains as $domain => $users) {
-            $mxsJson = $redis::HGET("mailsys:mail_white",$domain);
+            $mxsJson = $redis::HGET("mailsys:mail_hswhite",$domain);
+            if(empty($mxsJson)){
+                getmxrr($domain,$mxsJson);
+                $mxsJson = json_encode($mxsJson);
+                $redis::HSET("mailsys:mail_hswhite",$domain,$mxsJson);
+                $array[0]=[
+                    'name'=>$domain,
+                    'dns_mx'=>$mxsJson,
+                    'created_at'=>date('Y-m-d H:i:s'),
+                    'updated_at'=>date('Y-m-d H:i:s'),
+                ];
+                $whiteList->updateOrInsertBatch($uniqeKey = "name", $key = 'name,dns_mx,created_at,updated_at', $array);
+            }
             $mxsArr = json_decode($mxsJson,true);
-            $mxs = $mxsArr['mxrr'];
+            $mxs = $mxsArr;
             $mxs[] = $domain;
 
             asort($mxs);
@@ -1067,5 +1080,24 @@ class Validator
             ),
             [' ' => '']
         );
+    }
+
+    /**
+     * Redis白名单丢失，从数据库白名单所有的mx记录导进缓存
+     * @param WhiteList $whiteList
+     */
+    public function initRedisData(WhiteList $whiteList)
+    {
+        $redis = new Redis();
+        $white = "mailsys:mail_testwhite_aa";
+        $hswhite = "mailsys:mail_hswhite_aa";
+        DB::table('white_lists')->orderBy('id')->chunk(config('app.pipelineMx')*10, function ($whiteLists) use ($white,$hswhite) {
+            Redis::pipeline(function ($pipe) use ($whiteLists, $white,$hswhite) {
+                foreach ($whiteLists as $k => $v) {
+                    $pipe->ZAdd($white, time(),$v->name);
+                    $pipe->HSet($hswhite, $v->name,$v->dns_mx);
+                }
+            });
+        });
     }
 }
