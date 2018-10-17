@@ -79,9 +79,10 @@ class Validator
      * @var array
      */
     protected $command_timeouts = [
+        'connected' => 3,
         'ehlo' => 120,
         'helo' => 120,
-        'tls'  => 180, // start tls
+        'tls' => 180, // start tls
         'mail' => 300, // mail from
         'rcpt' => 300, // rcpt to,
         'rset' => 30,
@@ -93,10 +94,10 @@ class Validator
 
     // Some smtp response codes
     const SMTP_CONNECT_SUCCESS = 220;
-    const SMTP_QUIT_SUCCESS    = 221;
+    const SMTP_QUIT_SUCCESS = 221;
     const SMTP_GENERIC_SUCCESS = 250;
-    const SMTP_USER_NOT_LOCAL  = 251;
-    const SMTP_CANNOT_VRFY     = 252;
+    const SMTP_USER_NOT_LOCAL = 251;
+    const SMTP_CANNOT_VRFY = 252;
 
     const SMTP_SERVICE_UNAVAILABLE = 421;
 
@@ -226,7 +227,7 @@ class Validator
             return false;
         }
 
-        $test     = 'catch-all-test-' . time();
+        $test = 'catch-all-test-' . time();
         $accepted = $this->rcpt($test . '@' . $domain);
         if ($accepted) {
             // Success on a non-existing address is a "catch-all"
@@ -255,9 +256,8 @@ class Validator
      * @param string|null $sender Sender email address
      * @return array List of emails and their results
      */
-    public function validate(WhiteList $whiteList,$emails = [], $sender = null)
+    public function validate($emails = [], $mxs = [], $sender = null)
     {
-        $redis = new Redis();
         $this->results = [];
 
         if (!empty($emails)) {
@@ -270,32 +270,15 @@ class Validator
         if (!is_array($this->domains) || empty($this->domains)) {
             return $this->results;
         }
-
         // Query the MTAs on each domain if we have them
         foreach ($this->domains as $domain => $users) {
-            $mxsJson = $redis::HGET("mailsys:mail_hswhite",$domain);
-            if(empty($mxsJson)){
-                getmxrr($domain,$mxsJson);
-                $mxsJson = json_encode($mxsJson);
-                $redis::HSET("mailsys:mail_hswhite",$domain,$mxsJson);
-                $array[0]=[
-                    'name'=>$domain,
-                    'dns_mx'=>$mxsJson,
-                    'created_at'=>date('Y-m-d H:i:s'),
-                    'updated_at'=>date('Y-m-d H:i:s'),
-                ];
-                $whiteList->updateOrInsertBatch($uniqeKey = "name", $key = 'name,dns_mx,created_at,updated_at', $array);
-            }
-            $mxsArr = json_decode($mxsJson,true);
-            $mxs = $mxsArr;
             $mxs[] = $domain;
-
             asort($mxs);
 
             $this->debug('MX records (' . $domain . '): ' . print_r($mxs, true));
-            $this->domains_info[$domain]          = [];
+            $this->domains_info[$domain] = [];
             $this->domains_info[$domain]['users'] = $users;
-            $this->domains_info[$domain]['mxs']   = $mxs;
+            $this->domains_info[$domain]['mxs'] = $mxs;
             // Try each host, $_weight unused in the foreach body, but array_keys() doesn't guarantee the order
             foreach ($mxs as $host) {
                 // try connecting to the remote host
@@ -314,38 +297,26 @@ class Validator
             // Are we connected?
             if ($this->connected()) {
                 try {
-                    // Say helo, and continue if we can talk
-                    if ($this->helo()) {
-                        // try issuing MAIL FROM
-                        if (!$this->mail($this->from_user . '@' . $this->from_domain)) {
-                            // MAIL FROM not accepted, we can't talk
-                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    if ($this->connected()) {
+                        $this->noop();
+                        foreach ($users as $user) {
+                            $address = $user . '@' . $domain;
+                            $this->results[$address] = $this->rcpt($address);
                         }
-                        /**
-                         * If we're still connected, proceed (cause we might get
-                         * disconnected, or banned, or greylisted temporarily etc.)
-                         * see mail() for more
-                         */
-                        // If we're still connected, try issuing rcpts
-                        if ($this->connected()) {
-                            $this->noop();
-                            // RCPT for each user
-                            foreach ($users as $user) {
-                                $address                 = $user . '@' . $domain;
-                                $this->results[$address] = $this->rcpt($address);
-                                $this->noop();
-                            }
-                        }
-                    } else {
-                        // We didn't get a good response to helo and should be disconnected already
-                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                     }
+                    // Saying bye-bye if we're still connected, cause we're done here
+                    if ($this->connected()) {
+                        $this->rset();
+                        $this->disconnect();
+                    }
+
                 } catch (UnexpectedResponseException $e) {
                     // Unexpected responses handled as $this->no_comm_is_valid, that way anyone can
                     // decide for themselves if such results are considered valid or not
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                 } catch (TimeoutException $e) {
                     // A timeout is a comm failure, so treat the results on that domain
+
                     // according to $this->no_comm_is_valid as well
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                 }
@@ -354,6 +325,46 @@ class Validator
 
         return $this->getResults();
     }
+
+
+
+
+    /**
+     * 校验邮局连通性
+     * @param $mxs
+     * @throws NoTimeoutException
+     */
+    public function validateDomain($mxs)
+    {
+        foreach ($mxs as $host) {
+            try {
+                $this->connect($host);
+                if ($this->connected()) {
+                    break;
+                }
+            } catch (NoConnectionException $e) {
+                return [false, $e->getMessage()];
+            }
+        }
+
+        $result = false;
+        $message = '';
+        if ($this->connected()) {
+            try {
+                $message = $this->ehlo();
+                if (! empty($message)) {
+                    $result = true;
+                }
+            } catch (UnexpectedResponseException $e) {
+                return [false, $e->getMessage()];
+            } catch (TimeoutException $e) {
+                return [false, $e->getMessage()];
+            }
+        }
+        return [$result, $message];
+    }
+
+
 
     /**
      * Get validation results
@@ -412,21 +423,22 @@ class Validator
     protected function connect($host)
     {
         $remote_socket = $host . ':' . $this->connect_port;
-        $errnum        = 0;
-        $errstr        = '';
-        $this->host    = $remote_socket;
+        $errnum = 0;
+        $errstr = '';
+        $this->host = $remote_socket;
 
         // Open connection
         $this->debug('Connecting to ' . $this->host);
         // @codingStandardsIgnoreLine
-        $this->socket = /** @scrutinizer ignore-unhandled */ @stream_socket_client(
-            $this->host,
-            $errnum,
-            $errstr,
-            $this->connect_timeout,
-            STREAM_CLIENT_CONNECT,
-            stream_context_create([])
-        );
+        $this->socket = /** @scrutinizer ignore-unhandled */
+            @stream_socket_client(
+                $this->host,
+                $errnum,
+                $errstr,
+                $this->connect_timeout,
+                STREAM_CLIENT_CONNECT,
+                stream_context_create([])
+            );
 
         // Check and throw if not connected
         if (!$this->connected()) {
@@ -530,15 +542,10 @@ class Validator
      */
     protected function ehlo()
     {
-        try {
-            // Modern
-            $this->send('EHLO ' . $this->from_domain);
-            $this->expect(self::SMTP_GENERIC_SUCCESS, $this->command_timeouts['ehlo']);
-        } catch (UnexpectedResponseException $e) {
-            // Legacy
-            $this->send('HELO ' . $this->from_domain);
-            $this->expect(self::SMTP_GENERIC_SUCCESS, $this->command_timeouts['helo']);
-        }
+        $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+        $this->send('EHLO ' . $this->from_domain);
+        $result = $this->expect(self::SMTP_GENERIC_SUCCESS, $this->command_timeouts['connected']);
+        return $result;
     }
 
     /**
@@ -591,12 +598,7 @@ class Validator
      */
     protected function rcpt($to)
     {
-        // Need to have issued MAIL FROM first
-        if (!$this->state['mail']) {
-            throw new NoMailFromException('Need MAIL FROM before RCPT TO');
-        }
-
-        $valid          = false;
+        $result = false;
         $expected_codes = [
             self::SMTP_GENERIC_SUCCESS,
             self::SMTP_USER_NOT_LOCAL
@@ -605,15 +607,16 @@ class Validator
         if ($this->greylisted_considered_valid) {
             $expected_codes = array_merge($expected_codes, $this->greylisted);
         }
-
         // Issue RCPT TO, 5 minute timeout
         try {
             $this->send('RCPT TO:<' . $to . '>');
             // Handle response
             try {
-                $this->expect($expected_codes, $this->command_timeouts['rcpt']);
+                $result = $this->expect($expected_codes, $this->command_timeouts['rcpt']);
+                if (empty($result)) {
+                    $result = false;
+                }
                 $this->state['rcpt'] = true;
-                $valid               = true;
             } catch (UnexpectedResponseException $e) {
                 $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
             }
@@ -621,7 +624,7 @@ class Validator
             $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
         }
 
-        return $valid;
+        return $result;
     }
 
     /**
@@ -657,7 +660,7 @@ class Validator
         if ($this->state['helo']) {
             $this->send('QUIT');
             $this->expect(
-                [self::SMTP_GENERIC_SUCCESS,self::SMTP_QUIT_SUCCESS],
+                [self::SMTP_GENERIC_SUCCESS, self::SMTP_QUIT_SUCCESS],
                 $this->command_timeouts['quit'],
                 true
             );
@@ -767,7 +770,7 @@ class Validator
     protected function expect($codes, $timeout = null, $empty_response_allowed = false)
     {
         if (!is_array($codes)) {
-            $codes = (array) $codes;
+            $codes = (array)$codes;
         }
 
         $code = null;
@@ -777,10 +780,11 @@ class Validator
             $line = $this->recv($timeout);
             $text = $line;
             while (preg_match('/^[0-9]+-/', $line)) {
-                $line  = $this->recv($timeout);
+                $line = $this->recv($timeout);
                 $text .= $line;
             }
-            sscanf($line, '%d%s', $code, $text);
+            sscanf($line, '%d%s', $code, $msg);
+
             // TODO/FIXME: This is terrible to read/comprehend
             if ($code == self::SMTP_SERVICE_UNAVAILABLE ||
                 (false === $empty_response_allowed && (null === $code || !in_array($code, $codes)))) {
@@ -808,9 +812,9 @@ class Validator
      */
     protected function splitEmail($email)
     {
-        $parts  = explode('@', $email);
+        $parts = explode('@', $email);
         $domain = array_pop($parts);
-        $user   = implode('@', $parts);
+        $user = implode('@', $parts);
 
         return [$user, $domain];
     }
@@ -825,7 +829,7 @@ class Validator
     public function setEmails($emails)
     {
         if (!is_array($emails)) {
-            $emails = (array) $emails;
+            $emails = (array)$emails;
         }
 
         $this->domains = [];
@@ -848,24 +852,9 @@ class Validator
      */
     public function setSender($email)
     {
-        $parts             = $this->splitEmail($email);
-        $this->from_user   = $parts[0];
+        $parts = $this->splitEmail($email);
+        $this->from_user = $parts[0];
         $this->from_domain = $parts[1];
-    }
-
-    /**
-     * Queries the DNS server for MX entries of a certain domain.
-     *
-     * @param string $domain The domain for which to retrieve MX records
-     * @return array MX hosts and their weights
-     */
-    protected function mxQuery($domain)
-    {
-        $hosts  = [];
-        $weight = [];
-        getmxrr($domain, $hosts, $weight);
-
-        return [$hosts, $weight];
     }
 
     /**
@@ -952,7 +941,7 @@ class Validator
      * Compat for old lower_cased method calls.
      *
      * @param string $name
-     * @param array  $args
+     * @param array $args
      *
      * @return void
      */
@@ -975,7 +964,7 @@ class Validator
      */
     public function setConnectTimeout($timeout)
     {
-        $this->connect_timeout = (int) $timeout;
+        $this->connect_timeout = (int)$timeout;
     }
 
     /**
@@ -997,7 +986,7 @@ class Validator
      */
     public function setConnectPort($port)
     {
-        $this->connect_port = (int) $port;
+        $this->connect_port = (int)$port;
     }
 
     /**
@@ -1049,7 +1038,7 @@ class Validator
      */
     public function setCatchAllValidity($flag)
     {
-        $this->catchall_is_valid = (bool) $flag;
+        $this->catchall_is_valid = (bool)$flag;
     }
 
     /**
@@ -1082,22 +1071,4 @@ class Validator
         );
     }
 
-    /**
-     * Redis白名单丢失，从数据库白名单所有的mx记录导进缓存
-     * @param WhiteList $whiteList
-     */
-    public function initRedisData()
-    {
-        $redis = new Redis();
-        $white = "mailsys:mail_testwhite_aa";
-        $hswhite = "mailsys:mail_hswhite_aa";
-        DB::table('white_lists')->orderBy('id')->chunk(config('app.pipelineMx')*10, function ($whiteLists) use ($white,$hswhite) {
-            Redis::pipeline(function ($pipe) use ($whiteLists, $white,$hswhite) {
-                foreach ($whiteLists as $k => $v) {
-                    $pipe->ZAdd($white, time(),$v->name);
-                    $pipe->HSet($hswhite, $v->name,$v->dns_mx);
-                }
-            });
-        });
-    }
 }
