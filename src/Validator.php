@@ -80,11 +80,11 @@ class Validator
      */
     protected $command_timeouts = [
         'connected' => 10,
-        'ehlo' => 300,
+        'ehlo' => 120,
         'helo' => 120,
-        'tls' => 180, // start tls
-        'mail' => 600, // mail from
-        'rcpt' => 600, // rcpt to,
+        'tls'  => 180, // start tls
+        'mail' => 300, // mail from
+        'rcpt' => 300, // rcpt to,
         'rset' => 30,
         'quit' => 60,
         'noop' => 60
@@ -169,7 +169,7 @@ class Validator
      *
      * @var int
      */
-    private $connect_timeout = 30;
+    private $connect_timeout = 10;
 
     /**
      * Default sender username
@@ -289,8 +289,17 @@ class Validator
                     }
                 } catch (NoConnectionException $e) {
                     // Unable to connect to host, so these addresses are invalid?
-                    var_dump('Unable to connect. Exception caught: ' . $e->getMessage());
                     $this->setDomainResults($users, $domain, $this->no_conn_is_valid);
+                } catch (TimeoutException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (NoResponseException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (UnexpectedResponseException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (SendFailedException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (NoTimeoutException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                 }
             }
 
@@ -333,13 +342,16 @@ class Validator
                         $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                     }
                 } catch (UnexpectedResponseException $e) {
-                    // Unexpected responses handled as $this->no_comm_is_valid, that way anyone can
-                    // decide for themselves if such results are considered valid or not
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                 } catch (TimeoutException $e) {
-                    // A timeout is a comm failure, so treat the results on that domain
-
-                    // according to $this->no_comm_is_valid as well
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (NoConnectionException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (NoResponseException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (SendFailedException $e) {
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                } catch (NoTimeoutException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                 }
             }
@@ -366,6 +378,12 @@ class Validator
                 }
             } catch (NoConnectionException $e) {
                 return [false, $e->getMessage()];
+            } catch (TimeoutException $e) {
+                return [false, $e->getMessage()];
+            } catch (NoResponseException $e) {
+                return [false, $e->getMessage()];
+            } catch (UnexpectedResponseException $e) {
+                return [false, $e->getMessage()];
             }
         }
 
@@ -377,9 +395,13 @@ class Validator
                 if (! empty($message)) {
                     $result = true;
                 }
-            } catch (UnexpectedResponseException $e) {
+            } catch (NoConnectionException $e) {
                 return [false, $e->getMessage()];
             } catch (TimeoutException $e) {
+                return [false, $e->getMessage()];
+            } catch (NoResponseException $e) {
+                return [false, $e->getMessage()];
+            } catch (UnexpectedResponseException $e) {
                 return [false, $e->getMessage()];
             }
         }
@@ -536,8 +558,7 @@ class Validator
         } catch (UnexpectedResponseException $e) {
             // Connected, but got an unexpected response, so disconnect
             $result = false;
-            var_dump('Unexpected response after connecting: ' . $e->getMessage());
-//            $this->debug('Unexpected response after connecting: ' . $e->getMessage());
+            $this->debug('Unexpected response after connecting: ' . $e->getMessage());
             $this->disconnect(false);
         }
 
@@ -582,8 +603,7 @@ class Validator
             $result = false;
 
             // Got something unexpected in response to MAIL FROM
-            var_dump("Unexpected response to MAIL FROM\n:" . $e->getMessage());
-//            $this->debug("Unexpected response to MAIL FROM\n:" . $e->getMessage());
+            $this->debug("Unexpected response to MAIL FROM\n:" . $e->getMessage());
 
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
@@ -603,6 +623,11 @@ class Validator
      */
     protected function rcpt($to)
     {
+        // Need to have issued MAIL FROM first
+        if (!$this->state['mail']) {
+            throw new NoMailFromException('Need MAIL FROM before RCPT TO');
+        }
+
         $result = false;
         $expected_codes = [
             self::SMTP_GENERIC_SUCCESS,
@@ -618,18 +643,15 @@ class Validator
             // Handle response
             try {
                 $result = $this->expect($expected_codes, $this->command_timeouts['rcpt']);
-                var_dump($result);
                 if (empty($result)) {
                     $result = false;
                 }
                 $this->state['rcpt'] = true;
             } catch (UnexpectedResponseException $e) {
-                var_dump('Unexpected response to RCPT TO: ' . $e->getMessage());
-//                $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
+                $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
             }
         } catch (Exception $e) {
-            var_dump('Unexpected response to RCPT TO: ' . $e->getMessage());
-//            $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
+            $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
         }
 
         return $result;
