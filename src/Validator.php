@@ -79,12 +79,12 @@ class Validator
      * @var array
      */
     protected $command_timeouts = [
-        'connected' => 3,
-        'ehlo' => 120,
+        'connected' => 10,
+        'ehlo' => 300,
         'helo' => 120,
         'tls' => 180, // start tls
-        'mail' => 300, // mail from
-        'rcpt' => 300, // rcpt to,
+        'mail' => 600, // mail from
+        'rcpt' => 600, // rcpt to,
         'rset' => 30,
         'quit' => 60,
         'noop' => 60
@@ -169,7 +169,7 @@ class Validator
      *
      * @var int
      */
-    private $connect_timeout = 10;
+    private $connect_timeout = 30;
 
     /**
      * Default sender username
@@ -289,7 +289,7 @@ class Validator
                     }
                 } catch (NoConnectionException $e) {
                     // Unable to connect to host, so these addresses are invalid?
-                    $this->debug('Unable to connect. Exception caught: ' . $e->getMessage());
+                    var_dump('Unable to connect. Exception caught: ' . $e->getMessage());
                     $this->setDomainResults($users, $domain, $this->no_conn_is_valid);
                 }
             }
@@ -297,19 +297,41 @@ class Validator
             // Are we connected?
             if ($this->connected()) {
                 try {
-                    if ($this->connected()) {
-                        $this->noop();
-                        foreach ($users as $user) {
-                            $address = $user . '@' . $domain;
-                            $this->results[$address] = $this->rcpt($address);
+                    // Say helo, and continue if we can talk
+                    if ($this->ehlo()) {
+                        // try issuing MAIL FROM
+                        if (!$this->mail($emails)) {
+                            // MAIL FROM not accepted, we can't talk
+                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                         }
+                        /**
+                         * If we're still connected, proceed (cause we might get
+                         * disconnected, or banned, or greylisted temporarily etc.)
+                         * see mail() for more
+                         */
+                        if ($this->connected()) {
+                            $this->noop();
+                            // If we're still connected, try issuing rcpts
+                            if ($this->connected()) {
+                                $this->noop();
+                                // RCPT for each user
+                                foreach ($users as $user) {
+                                    $address                 = $user . '@' . $domain;
+                                    $this->results[$address] = $this->rcpt($address);
+                                    $this->noop();
+                                }
+                            }
+                            // Saying bye-bye if we're still connected, cause we're done here
+                            if ($this->connected()) {
+                                // Issue a RSET for all the things we just made the MTA do
+                                $this->rset();
+                                $this->disconnect();
+                            }
+                        }
+                    } else {
+                        // We didn't get a good response to helo and should be disconnected already
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                     }
-                    // Saying bye-bye if we're still connected, cause we're done here
-                    if ($this->connected()) {
-                        $this->rset();
-                        $this->disconnect();
-                    }
-
                 } catch (UnexpectedResponseException $e) {
                     // Unexpected responses handled as $this->no_comm_is_valid, that way anyone can
                     // decide for themselves if such results are considered valid or not
@@ -440,6 +462,8 @@ class Validator
                 stream_context_create([])
             );
 
+        $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+
         // Check and throw if not connected
         if (!$this->connected()) {
             $this->debug('Connect failed: ' . $errstr . ', error number: ' . $errnum . ', host: ' . $this->host);
@@ -506,29 +530,14 @@ class Validator
         try {
             $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['helo']);
             $this->ehlo();
-
             // Session started
             $this->state['helo'] = true;
-
-            // Are we going for a TLS connection?
-            /*
-            if ($this->tls) {
-                // send STARTTLS, wait 3 minutes
-                $this->send('STARTTLS');
-                $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['tls']);
-                $result = stream_socket_enable_crypto($this->socket, true,
-                    STREAM_CRYPTO_METHOD_TLS_CLIENT);
-                if (!$result) {
-                    throw new SMTP_Validate_Email_Exception_No_TLS('Cannot enable TLS');
-                }
-            }
-            */
-
             $result = true;
         } catch (UnexpectedResponseException $e) {
             // Connected, but got an unexpected response, so disconnect
             $result = false;
-            $this->debug('Unexpected response after connecting: ' . $e->getMessage());
+            var_dump('Unexpected response after connecting: ' . $e->getMessage());
+//            $this->debug('Unexpected response after connecting: ' . $e->getMessage());
             $this->disconnect(false);
         }
 
@@ -542,7 +551,6 @@ class Validator
      */
     protected function ehlo()
     {
-        $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
         $this->send('EHLO ' . $this->from_domain);
         $result = $this->expect(self::SMTP_GENERIC_SUCCESS, $this->command_timeouts['connected']);
         return $result;
@@ -559,10 +567,6 @@ class Validator
      */
     protected function mail($from)
     {
-        if (!$this->state['helo']) {
-            throw new NoHeloException('Need HELO before MAIL FROM');
-        }
-
         // Issue MAIL FROM, 5 minute timeout
         $this->send('MAIL FROM:<' . $from . '>');
 
@@ -578,7 +582,8 @@ class Validator
             $result = false;
 
             // Got something unexpected in response to MAIL FROM
-            $this->debug("Unexpected response to MAIL FROM\n:" . $e->getMessage());
+            var_dump("Unexpected response to MAIL FROM\n:" . $e->getMessage());
+//            $this->debug("Unexpected response to MAIL FROM\n:" . $e->getMessage());
 
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
@@ -613,15 +618,18 @@ class Validator
             // Handle response
             try {
                 $result = $this->expect($expected_codes, $this->command_timeouts['rcpt']);
+                var_dump($result);
                 if (empty($result)) {
                     $result = false;
                 }
                 $this->state['rcpt'] = true;
             } catch (UnexpectedResponseException $e) {
-                $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
+                var_dump('Unexpected response to RCPT TO: ' . $e->getMessage());
+//                $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
             }
         } catch (Exception $e) {
-            $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
+            var_dump('Unexpected response to RCPT TO: ' . $e->getMessage());
+//            $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
         }
 
         return $result;
@@ -784,7 +792,6 @@ class Validator
                 $text .= $line;
             }
             sscanf($line, '%d%s', $code, $msg);
-
             // TODO/FIXME: This is terrible to read/comprehend
             if ($code == self::SMTP_SERVICE_UNAVAILABLE ||
                 (false === $empty_response_allowed && (null === $code || !in_array($code, $codes)))) {
