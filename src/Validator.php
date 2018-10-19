@@ -199,6 +199,10 @@ class Validator
      */
     private $results = [];
 
+    private $users = [];
+
+    private  $usrsDomains = [];
+
     /**
      * @param array|string $emails Email(s) to validate
      * @param string|null $sender Sender's email address
@@ -274,6 +278,8 @@ class Validator
         }
         // Query the MTAs on each domain if we have them
         foreach ($this->domains as $domain => $users) {
+            $this->users = $users;
+            $this->usrsDomains = $domain;
             $mxs[] = $domain;
             asort($mxs);
 
@@ -291,17 +297,17 @@ class Validator
                     }
                 } catch (NoConnectionException $e) {
                     // Unable to connect to host, so these addresses are invalid?
-                    $this->setDomainResults($users, $domain, $this->no_conn_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
                 } catch (TimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (NoResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (UnexpectedResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (SendFailedException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (NoTimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 }
             }
 
@@ -313,7 +319,7 @@ class Validator
                         // try issuing MAIL FROM
                         if (!$this->mail($emails)) {
                             // MAIL FROM not accepted, we can't talk
-                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                         }
                         /**
                          * If we're still connected, proceed (cause we might get
@@ -341,20 +347,20 @@ class Validator
                         }
                     } else {
                         // We didn't get a good response to helo and should be disconnected already
-                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                     }
                 } catch (UnexpectedResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (TimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (NoConnectionException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (NoResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (SendFailedException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 } catch (NoTimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 }
             }
         } // outermost foreach
@@ -440,10 +446,11 @@ class Validator
      *
      * @return void
      */
-    private function setDomainResults(array $users, $domain, $val)
+    private function setDomainResults(array $users, $domain, $val,$data = [])
     {
         foreach ($users as $user) {
             $this->results[$user . '@' . $domain] = $val;
+            $this->results['mailError'] =  $data;
         }
     }
 
@@ -538,37 +545,6 @@ class Validator
     }
 
     /**
-     * Sends a HELO/EHLO sequence.
-     *
-     * @todo Implement TLS
-     *
-     * @return bool|null True if successful, false otherwise. Null if already done.
-     */
-    protected function helo()
-    {
-        // Don't do it if already done
-        if ($this->state['helo']) {
-            return null;
-        }
-
-        $result = false;
-        try {
-            $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['helo']);
-            $this->ehlo();
-            // Session started
-            $this->state['helo'] = true;
-            $result = true;
-        } catch (UnexpectedResponseException $e) {
-            // Connected, but got an unexpected response, so disconnect
-            $result = false;
-            $this->debug('Unexpected response after connecting: ' . $e->getMessage());
-            $this->disconnect(false);
-        }
-
-        return $result;
-    }
-
-    /**
      * Sends `EHLO` or `HELO`, depending on what's supported by the remote host.
      *
      * @return void
@@ -611,6 +587,7 @@ class Validator
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
             $this->disconnect(false);
+            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
         }
 
         return $result;
@@ -652,9 +629,11 @@ class Validator
                 $this->state['rcpt'] = true;
             } catch (UnexpectedResponseException $e) {
                 $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
+                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
             }
         } catch (Exception $e) {
             $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
+            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
         }
 
         return $result;
@@ -829,6 +808,7 @@ class Validator
              */
             $this->debug('No response in expect(): ' . $e->getMessage());
             $this->disconnect(false);
+            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
         }
 
         return $text;
