@@ -259,6 +259,8 @@ class Validator
     public function validate($emails = [], $mxs = [], $sender = null)
     {
         $this->results = [];
+        $this->domains_info = [];
+        $this->clearLog();
 
         if (!empty($emails)) {
             $this->setEmails($emails);
@@ -370,6 +372,7 @@ class Validator
      */
     public function validateDomain($mxs)
     {
+        $this->clearLog();
         foreach ($mxs as $host) {
             try {
                 $this->connect($host);
