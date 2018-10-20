@@ -319,7 +319,7 @@ class Validator
                         // try issuing MAIL FROM
                         if (!$this->mail($emails)) {
                             // MAIL FROM not accepted, we can't talk
-                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
                         }
                         /**
                          * If we're still connected, proceed (cause we might get
@@ -450,7 +450,9 @@ class Validator
     {
         foreach ($users as $user) {
             $this->results[$user . '@' . $domain] = $val;
-            $this->results['mailError'] =  $data;
+            if(!empty($data)) {
+                $this->results['mailError'] =  $data;
+            }
         }
     }
 
@@ -579,6 +581,8 @@ class Validator
 
             $result = true;
         } catch (UnexpectedResponseException $e) {
+            var_dump('fail');
+            var_dump($e->getMessage());
             $result = false;
 
             // Got something unexpected in response to MAIL FROM
@@ -586,8 +590,10 @@ class Validator
 
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
-            $this->disconnect(false);
             $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
+            var_dump('111111');
+            $this->disconnect(false);
+            var_dump('2222222');
         }
 
         return $result;
