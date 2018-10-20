@@ -581,7 +581,6 @@ class Validator
 
             $result = true;
         } catch (UnexpectedResponseException $e) {
-            var_dump('fail');
             var_dump($e->getMessage());
             $result = false;
 
@@ -591,9 +590,7 @@ class Validator
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
             $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
-            var_dump('111111');
             $this->disconnect(false);
-            var_dump('2222222');
         }
 
         return $result;
