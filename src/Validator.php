@@ -280,7 +280,6 @@ class Validator
         foreach ($this->domains as $domain => $users) {
             $this->users = $users;
             $this->usrsDomains = $domain;
-            $mxs[] = $domain;
             asort($mxs);
 
             $this->debug('MX records (' . $domain . '): ' . print_r($mxs, true));
@@ -310,6 +309,33 @@ class Validator
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 }
             }
+
+            try {
+                $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+            } catch (Exception $e){
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (NoConnectionException $e) {
+                // Unable to connect to host, so these addresses are invalid?
+                $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (TimeoutException $e) {
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (NoResponseException $e) {
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (UnexpectedResponseException $e) {
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (SendFailedException $e) {
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            } catch (NoTimeoutException $e) {
+                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                return $this->getResults();
+            }
+
 
             // Are we connected?
             if ($this->connected()) {
@@ -347,7 +373,7 @@ class Validator
                         }
                     } else {
                         // We didn't get a good response to helo and should be disconnected already
-                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, 'ehlo fail');
                     }
                 } catch (UnexpectedResponseException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
@@ -364,6 +390,7 @@ class Validator
                 }
             }
         } // outermost foreach
+
 
         return $this->getResults();
     }
@@ -496,8 +523,6 @@ class Validator
                 stream_context_create([])
             );
 
-        $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
-
         // Check and throw if not connected
         if (!$this->connected()) {
             $this->debug('Connect failed: ' . $errstr . ', error number: ' . $errnum . ', host: ' . $this->host);
@@ -581,7 +606,6 @@ class Validator
 
             $result = true;
         } catch (UnexpectedResponseException $e) {
-            var_dump($e->getMessage());
             $result = false;
 
             // Got something unexpected in response to MAIL FROM
