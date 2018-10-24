@@ -423,25 +423,24 @@ class Validator
             }
         }
 
-        $result = false;
-        $message = '';
+        try { ///消费掉连接的socket返回
+            $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+        } catch (\Exception $e){
+            return [false, $e->getMessage()];
+        }
+
         if ($this->connected()) {
             try {
                 $message = $this->ehlo();
-                if (! empty($message)) {
-                    $result = true;
+                if ($this->ehlo()) {
+                    return [true, $message];
                 }
-            } catch (NoConnectionException $e) {
-                return [false, $e->getMessage()];
-            } catch (TimeoutException $e) {
-                return [false, $e->getMessage()];
-            } catch (NoResponseException $e) {
-                return [false, $e->getMessage()];
-            } catch (UnexpectedResponseException $e) {
+            } catch (\Exception $e){
                 return [false, $e->getMessage()];
             }
+        } else {
+            return [false, "无法连接远程mx主机"];
         }
-        return [$result, $message];
     }
 
 
@@ -579,6 +578,7 @@ class Validator
     protected function ehlo()
     {
         $this->send('EHLO ' . $this->from_domain);
+
         $result = $this->expect(self::SMTP_GENERIC_SUCCESS, $this->command_timeouts['connected']);
         return $result;
     }
