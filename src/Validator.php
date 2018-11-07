@@ -913,10 +913,9 @@ class Validator
         $this->throwIfNotConnected();
 
         $this->debug('send>>>: ' . $cmd);
-        if ($this->connected()) {
-            // Write the cmd to the connection stream
-            $result = fwrite($this->socket, $cmd . self::CRLF);
-        }
+		// Write the cmd to the connection stream
+		$result = fwrite($this->socket, $cmd . self::CRLF);
+
 
 
         // Did it work?
@@ -1005,7 +1004,7 @@ class Validator
              * forcibly closed the connection so lets clean up on our end as well?
              */
             $this->debug('No response in expect(): ' . $e->getMessage());
-//            $this->disconnect(false);
+            $this->disconnect(false);
             $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
         }
 
