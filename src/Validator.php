@@ -782,7 +782,7 @@ class Validator
             // Hotmail has been known to do this + was closing the connection
             // forcibly on their end, so we're killing the socket here too
             $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
-//            $this->disconnect(false);
+            $this->disconnect(false);
         }
 
         return $result;
