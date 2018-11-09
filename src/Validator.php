@@ -260,14 +260,14 @@ class Validator
      * @param string|null $sender Sender email address
      * @return array List of emails and their results
      */
-    public function validate($emails = [], $mxs = [], $type = [], $sender = null)
+    public function validate($emails = [], $mxs = [], $fromDomain = [], $isMailFrom = true, $sender = null)
     {
         $this->results = [];
         $this->domains_info = [];
         $this->clearLog();
-        //国内邮箱
-        if ($type == 'cn') {
-            $this->from_domain = 'test.com';
+        //fromDomain判断
+        if ($fromDomain) {
+            $this->from_domain = $fromDomain;
         }
 
         if (!empty($emails)) {
@@ -346,8 +346,8 @@ class Validator
                 try {
                     // Say helo, and continue if we can talk
                     if ($this->ehlo()) {
-                        //国内邮箱判断
-                        if ($type == 'cn') {
+                        //MailFrom邮箱地址判断
+                        if (empty($isMailFrom)) {
                             $emails = '';
                         }
                         // try issuing MAIL FROM
