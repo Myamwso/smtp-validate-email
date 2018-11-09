@@ -2,8 +2,6 @@
 
 namespace SMTPValidateEmail;
 
-use App\WhiteList;
-use Illuminate\Support\Facades\DB;
 use \SMTPValidateEmail\Exceptions\Exception as Exception;
 use \SMTPValidateEmail\Exceptions\Timeout as TimeoutException;
 use \SMTPValidateEmail\Exceptions\NoTimeout as NoTimeoutException;
@@ -13,7 +11,6 @@ use \SMTPValidateEmail\Exceptions\NoHelo as NoHeloException;
 use \SMTPValidateEmail\Exceptions\NoMailFrom as NoMailFromException;
 use \SMTPValidateEmail\Exceptions\NoResponse as NoResponseException;
 use \SMTPValidateEmail\Exceptions\SendFailed as SendFailedException;
-use Illuminate\Support\Facades\Redis;
 
 class Validator
 {
