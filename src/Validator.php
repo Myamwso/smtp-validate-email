@@ -251,6 +251,7 @@ class Validator
     }
 
     /**
+     * date:2018.11.12
      * Performs validation of specified email addresses.
      *
      * @param array|string $emails Emails to validate (or a single one as a string)
@@ -292,9 +293,6 @@ class Validator
                 // try connecting to the remote host
                 try {
                     $this->connect($host);
-                    if ($this->connected()) {
-                        break;
-                    }
                 } catch (NoConnectionException $e) {
                     // Unable to connect to host, so these addresses are invalid?
                     $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
@@ -309,95 +307,98 @@ class Validator
                 } catch (NoTimeoutException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 }
-            }
 
-            try {
-                $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
-            } catch (Exception $e){
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (NoConnectionException $e) {
-                // Unable to connect to host, so these addresses are invalid?
-                $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (TimeoutException $e) {
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (NoResponseException $e) {
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (UnexpectedResponseException $e) {
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (SendFailedException $e) {
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            } catch (NoTimeoutException $e) {
-                $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                return $this->getResults();
-            }
+                // Are we connected?
+                if ($this->connected()) {
+                    try {
+                        $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+                    } catch (Exception $e){
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (NoConnectionException $e) {
+                        // Unable to connect to host, so these addresses are invalid?
+                        $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (TimeoutException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (NoResponseException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (UnexpectedResponseException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (SendFailedException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    } catch (NoTimeoutException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+//                    return $this->getResults();
+                    }
 
 
-            // Are we connected?
-            if ($this->connected()) {
-                try {
-                    // Say helo, and continue if we can talk
-                    if ($this->ehlo()) {
-                        //MailFrom邮箱地址判断
-                        if (empty($isMailFrom)) {
-                            $emails = '';
-                        }
-                        // try issuing MAIL FROM
-                        if (!$this->mail($emails)) {
-                            // MAIL FROM not accepted, we can't talk
-                            $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
-                        }
-                        /**
-                         * If we're still connected, proceed (cause we might get
-                         * disconnected, or banned, or greylisted temporarily etc.)
-                         * see mail() for more
-                         */
-                        if ($this->connected()) {
-                            $this->noop();
-                            // If we're still connected, try issuing rcpts
+                    try {
+                        // Say helo, and continue if we can talk
+                        if ($this->ehlo()) {
+                            //MailFrom邮箱地址判断
+                            if (empty($isMailFrom)) {
+                                $emails = '';
+                            }
+                            // try issuing MAIL FROM
+                            if (!$this->mail($emails)) {
+                                // MAIL FROM not accepted, we can't talk
+                                $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                            }
+                            /**
+                             * If we're still connected, proceed (cause we might get
+                             * disconnected, or banned, or greylisted temporarily etc.)
+                             * see mail() for more
+                             */
                             if ($this->connected()) {
                                 $this->noop();
-                                // RCPT for each user
-                                foreach ($users as $user) {
-                                    $address                 = $user . '@' . $domain;
-                                    $this->results[$address] = $this->rcpt($address);
+                                // If we're still connected, try issuing rcpts
+                                if ($this->connected()) {
                                     $this->noop();
+                                    // RCPT for each user
+                                    foreach ($users as $user) {
+                                        $address                 = $user . '@' . $domain;
+                                        if ($this->rcpt($address)) {
+                                            $this->results[$address] = $this->rcpt($address);
+                                            break 2;
+                                        }
+                                        $this->noop();
+                                    }
+                                }
+                                // Saying bye-bye if we're still connected, cause we're done here
+                                if ($this->connected()) {
+                                    // Issue a RSET for all the things we just made the MTA do
+                                    $this->rset();
+                                    $this->disconnect();
                                 }
                             }
-                            // Saying bye-bye if we're still connected, cause we're done here
-                            if ($this->connected()) {
-                                // Issue a RSET for all the things we just made the MTA do
-                                $this->rset();
-                                $this->disconnect();
-                            }
                         }
+                    } catch (UnexpectedResponseException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                    } catch (TimeoutException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                    } catch (NoConnectionException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                    } catch (NoResponseException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                    } catch (SendFailedException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
+                    } catch (NoTimeoutException $e) {
+                        $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                     }
-                } catch (UnexpectedResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                } catch (TimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                } catch (NoConnectionException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                } catch (NoResponseException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                } catch (SendFailedException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                } catch (NoTimeoutException $e) {
-                    $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
                 }
+
             }
+
         } // outermost foreach
 
 
         return $this->getResults();
     }
-
-
 
 
     /**
