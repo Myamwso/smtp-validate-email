@@ -298,6 +298,7 @@ class Validator
             $this->domains_info[$domain] = [];
             $this->domains_info[$domain]['users'] = $users;
             $this->domains_info[$domain]['mxs'] = $mxs;
+
             // Try each host, $_weight unused in the foreach body, but array_keys() doesn't guarantee the order
             foreach ($mxs as $host) {
                 // try connecting to the remote host
@@ -439,22 +440,16 @@ class Validator
                 } catch (NoConnectionException $e) {
                     // Unable to connect to host, so these addresses are invalid?
                     $this->setDomainResults($users, $domain, $this->no_conn_is_valid, $e->getMessage());
-                    return $this->getResults();
                 } catch (TimeoutException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                    return $this->getResults();
                 } catch (NoResponseException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                    return $this->getResults();
                 } catch (UnexpectedResponseException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                    return $this->getResults();
                 } catch (SendFailedException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                    return $this->getResults();
                 } catch (NoTimeoutException $e) {
                     $this->setDomainResults($users, $domain, $this->no_comm_is_valid, $e->getMessage());
-                    return $this->getResults();
                 }
 
                 // Are we connected?
@@ -497,6 +492,7 @@ class Validator
                             if (!$this->mail($emails)) {
                                 // MAIL FROM not accepted, we can't talk
                                 $this->setDomainResults($users, $domain, $this->no_comm_is_valid);
+                                return $this->getResults();
                             }
                             /**
                              * If we're still connected, proceed (cause we might get
@@ -511,8 +507,10 @@ class Validator
                                     // RCPT for each user
                                     foreach ($users as $user) {
                                         $address                 = $user . '@' . $domain;
-                                        if ($this->rcpt($address)) {
-                                            $this->results[$address] = $this->rcpt($address);
+                                        $rcptResult = $this->rcpt($address);
+                                        if ($rcptResult) {
+                                            $this->results['passRes'][] = $rcptResult;
+                                            $this->results[$address] = $rcptResult;
                                         }
                                         $this->noop();
                                     }
@@ -799,23 +797,14 @@ class Validator
             $expected_codes = array_merge($expected_codes, $this->greylisted);
         }
         // Issue RCPT TO, 5 minute timeout
-        try {
-            $this->send('RCPT TO:<' . $to . '>');
-            // Handle response
-            try {
-                $result = $this->expect($expected_codes, $this->command_timeouts['rcpt']);
-                if (empty($result)) {
-                    $result = false;
-                }
-                $this->state['rcpt'] = true;
-            } catch (UnexpectedResponseException $e) {
-                $this->debug('Unexpected response to RCPT TO: ' . $e->getMessage());
-                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
-            }
-        } catch (Exception $e) {
-            $this->debug('Sending RCPT TO failed: ' . $e->getMessage());
-            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $e->getMessage());
+
+        $this->send('RCPT TO:<' . $to . '>');
+        // Handle response
+        $result = $this->expect($expected_codes, $this->command_timeouts['rcpt']);
+        if (empty($result)) {
+            $result = false;
         }
+        $this->state['rcpt'] = true;
 
         return $result;
     }
