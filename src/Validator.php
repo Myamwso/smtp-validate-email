@@ -284,7 +284,8 @@ class Validator
         //判断domain 域名是不是qq域名
         $repeatArr = ['qq.com'];
         if (in_array($this->domain,$repeatArr)) {
-            $this->validateAllMx($emails,$mxs,$isMailFrom);
+            $allMxRes = $this->validateAllMx($emails,$mxs,$isMailFrom);
+            return $allMxRes;
         }
 
         // Query the MTAs on each domain if we have them
