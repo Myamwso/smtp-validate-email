@@ -226,35 +226,6 @@ class Validator
         $this->disconnect(false);
     }
 
-    /**----------------------------------------------------------------**/
-    /**
-     * @return \Generator
-     */
-    private function mailGen()
-    {
-        $from = yield;
-        $to = yield;
-        $subject = yield;
-        $body = yield;
-        yield "FROM: <" . $from . ">\n";
-        yield "To: <" . $to . ">\n";
-        yield "Date: " . date("r") . "\n";
-        yield "Subject: " . $subject . "\n";
-        yield "\n";
-        yield $body;
-        yield "";
-    }
-
-    /**
-     * @return mixed
-     */
-    public function getLine()
-    {
-        $resp = $this->mail->current();
-        $this->mail->next();
-        return $resp;
-    }
-
     public function cnSend($to, $mxs, $mxPort, $fromDomain = [], $proxy, $proxyPort,$mailRecordLog,$isMailFrom = '')
     {
         $this->results = [];
@@ -284,100 +255,112 @@ class Validator
             $this->domains_info[$domain]['users'] = $users;
             $this->domains_info[$domain]['mxs'] = $mxs;
 
-            // Try each host, $_weight unused in the foreach body, but array_keys() doesn't guarantee the order
-            foreach ($mxs as $host) {
-                $this->mail = $this->mailGen();
-                $this->mail->send('');
-                $this->mail->send('');
-                $this->mail->send('');
-                $this->mail->send('');
-                $ch = curl_init("smtp://{$host}:{$mxPort}/{$this->from_domain}");
-                curl_setopt($ch, CURLOPT_PROXY, $proxy); //代理ip
-                curl_setopt($ch, CURLOPT_PROXYPORT, $proxyPort); //代理端口
-                curl_setopt($ch, CURLOPT_HTTPPROXYTUNNEL, 1); //管道
-                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-                curl_setopt($ch, CURLOPT_MAIL_FROM, "<" . $isMailFrom . ">");
-                curl_setopt($ch, CURLOPT_MAIL_RCPT, array("<" . $to . ">"));
-                curl_setopt($ch, CURLOPT_PUT, 1);
-                $file = $mailRecordLog . $to . '.log';
-                $op = fopen($file, "a");
-                curl_setopt($ch, CURLOPT_VERBOSE, true); // Uncomment to see the transaction
-                curl_setopt($ch, CURLOPT_STDERR, $op);
-                fwrite($op,"##{$proxy}###\n");
-                curl_setopt($ch, CURLOPT_READFUNCTION, array($this, "getLine"));
-                curl_exec($ch);
-                curl_close($ch);
-                fclose($op);
-
-                $file_content_temp = file_get_contents($file);
-                $file_content = explode("##{$proxy}###", $file_content_temp);
-                $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
-                foreach ($array as $k => $v) {
-                    if (preg_match('/Recv failure: Connection reset by peer/', $v)) { ///proxy connect
-                        $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, 'proxy fail');
-                        return $this->getResults();
+            if($domain == "qq.com"){
+                foreach($mxs as $host){
+                    $mailResult = $this->curlGetMail($to, $host, $mxPort, $proxy, $proxyPort,$mailRecordLog,$isMailFrom);
+                    if ($mailResult) {
+                        return $mailResult;
                     }
-                    else if (preg_match("/connect to {$proxy} port {$proxyPort} failed/", $v)) {///proxy failed
-                        $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
-                        return $this->getResults();
-                    }
-                    else if (preg_match("/Proxy-Connection: Keep-Alive/", $v)) {///代理连接mx记录没响应
-                        if (!preg_match('/ 200 /', $array[$k + 2])) {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 2]);
-                            return $this->getResults();
-                        }
-                    }
-                    else if (preg_match("/Connection timed out after/", $v)) {///Connection timed out
-                        $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
-                        return $this->getResults();
-                    }
-                    else if (preg_match('/Proxy replied OK to CONNECT request/', $v)) {///coonnect
-                        if (!preg_match('/^\< 220/', $array[$k + 1])) {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
-                            return $this->getResults();
-                        }
-                    }
-                    else if (preg_match('/^\> EHLO/', $v)) {  ///ehlo
-                        //ehlo 返回
-                        if (!preg_match('/^\< 250/', $array[$k + 1])) {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
-                            return $this->getResults();
-                        }
-                    }
-                    else if (preg_match('/^\> MAIL FROM/', $v)) {///mail from
-                        //ehlo 返回
-                        if (!preg_match('/^\< 250/', $array[$k - 1])) {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k - 1]);
-                            return $this->getResults();
-                        }
-                        //mail from 返回
-                        if (!preg_match('/^\< 250/', $array[$k + 1])) {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
-                            return $this->getResults();
-                        }
-                    }
-                    else if (preg_match('/^\> RCPT TO/', $v)) {///rcpt to
-                        if (preg_match('/^\< 250/', $array[$k + 1])) {
-                            $address = $this->users[0] . '@' . $this->usrsDomains;
-                            $this->results[$address] = $array[$k + 1];
-                            $this->results['passRes'][] = $array[$k + 1];
-                        } else {
-                            $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
-                            return $this->getResults();
-                        }
-                    }
+                }
+            }else{
+                $mailResult = $this->curlGetMail($to, $mxs[rand(0,count($mxs)-1)], $mxPort, $proxy, $proxyPort,$mailRecordLog,$isMailFrom);
+                if ($mailResult) {
+                    return $mailResult;
                 }
             }
         } // outermost foreach
-        //获取未知的错误
-        if (empty($this->results)) {
-            $unkownError = $mailRecordLog.'unkownError.log';
-            file_put_contents($unkownError,$to.'#####'.$file_content_temp.PHP_EOL,FILE_APPEND);
-        }
+
         return $this->getResults();
     }
 
+    public function curlGetMail($to, $host, $mxPort, $proxy, $proxyPort,$mailRecordLog,$isMailFrom = '') {
+        // Try each host, $_weight unused in the foreach body, but array_keys() doesn't guarantee the order
+        $ch = curl_init("smtp://{$host}:{$mxPort}/{$this->from_domain}");
+        curl_setopt($ch, CURLOPT_PROXY, $proxy); //代理ip
+        curl_setopt($ch, CURLOPT_PROXYPORT, $proxyPort); //代理端口
+        curl_setopt($ch, CURLOPT_HTTPPROXYTUNNEL, 1); //管道
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_MAIL_FROM, "<" . $isMailFrom . ">");
+        curl_setopt($ch, CURLOPT_MAIL_RCPT, array("<" . $to . ">"));
+        curl_setopt($ch, CURLOPT_PUT, 1);
+        $file = $mailRecordLog . $to . '.log';
+        $op = fopen($file, "a");
+        curl_setopt($ch, CURLOPT_VERBOSE, true); // Uncomment to see the transaction
+        curl_setopt($ch, CURLOPT_STDERR, $op);
+        fwrite($op,"##{$proxy}###\n");
+        curl_exec($ch);
+        curl_close($ch);
+        fclose($op);
 
+        $file_content_temp = file_get_contents($file);
+        $file_content = explode("##{$proxy}###", $file_content_temp);
+        $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
+        foreach ($array as $k => $v) {
+            if (preg_match('/421 Too many connections/', $v)) { ///163连接超数量
+                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
+                return $this->getResults();
+            }
+            if (preg_match('/Recv failure: Connection reset by peer/', $v)) { ///proxy connect
+                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
+                return $this->getResults();
+            }
+            else if (preg_match("/connect to {$proxy} port {$proxyPort} failed/", $v)) {///proxy failed
+                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
+                return $this->getResults();
+            }
+            else if (preg_match("/Proxy-Connection: Keep-Alive/", $v)) {///代理连接mx记录没响应
+                if (!preg_match('/ 200 /', $array[$k + 2])) {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 2]);
+                    return $this->getResults();
+                }
+            }
+            else if (preg_match("/Connection timed out after/", $v)) {///Connection timed out
+                $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
+                return $this->getResults();
+            }
+            else if (preg_match('/Proxy replied OK to CONNECT request/', $v)) {///coonnect
+                if (!preg_match('/^\< 220/', $array[$k + 1])) {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
+                    return $this->getResults();
+                }
+            }
+            else if (preg_match('/^\> EHLO/', $v)) {  ///ehlo
+                //ehlo 返回
+                if (!preg_match('/^\< 250/', $array[$k + 1])) {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
+                    return $this->getResults();
+                }
+            }
+            else if (preg_match('/^\> MAIL FROM/', $v)) {///mail from
+                //ehlo 返回
+                if (!preg_match('/^\< 250/', $array[$k - 1])) {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k - 1]);
+                    return $this->getResults();
+                }
+                //mail from 返回
+                if (!preg_match('/^\< 250/', $array[$k + 1])) {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
+                    return $this->getResults();
+                }
+            }
+            else if (preg_match('/^\> RCPT TO/', $v)) {///rcpt to
+                if (preg_match('/^\< 250/', $array[$k + 1])) {
+                    $address = $this->users[0] . '@' . $this->usrsDomains;
+                    $this->results[$address] = $array[$k + 1];
+                    $this->results['passRes'][] = $array[$k + 1];
+                } else {
+                    $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $array[$k + 1]);
+                    return $this->getResults();
+                }
+            }
+        }
+
+        //获取未知的错误
+        if (empty($this->results)) {
+            $unkownError = $mailRecordLog.'unkownError.log';
+            file_put_contents($unkownError,$to.'#####'.PHP_EOL,FILE_APPEND);
+        }
+    }
 
 
 
