@@ -230,6 +230,7 @@ class Validator
     {
         $this->results = [];
         $this->domains_info = [];
+        $this->results['mailError'] = '';
         $this->clearLog();
         //fromDomain判断
         if ($fromDomain) {
@@ -274,6 +275,7 @@ class Validator
     }
 
     public function curlGetMail($to, $host, $mxPort, $proxy, $proxyPort,$mailRecordLog,$isMailFrom = '') {
+        $emailArr = explode('@',$to);
         // Try each host, $_weight unused in the foreach body, but array_keys() doesn't guarantee the order
         $ch = curl_init("smtp://{$host}:{$mxPort}/{$this->from_domain}");
         curl_setopt($ch, CURLOPT_PROXY, $proxy); //代理ip
@@ -283,7 +285,7 @@ class Validator
         curl_setopt($ch, CURLOPT_MAIL_FROM, "<" . $isMailFrom . ">");
         curl_setopt($ch, CURLOPT_MAIL_RCPT, array("<" . $to . ">"));
         curl_setopt($ch, CURLOPT_PUT, 1);
-        $file = $mailRecordLog . $to . '.log';
+        $file = $mailRecordLog . $emailArr[1] . '/' . $to . '.log';
         $op = fopen($file, "a");
         curl_setopt($ch, CURLOPT_VERBOSE, true); // Uncomment to see the transaction
         curl_setopt($ch, CURLOPT_STDERR, $op);
@@ -296,7 +298,7 @@ class Validator
         $file_content = explode("##{$proxy}###", $file_content_temp);
         $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
         foreach ($array as $k => $v) {
-            if (preg_match('/421 Too many connections/', $v)) { ///163连接超数量
+            if (preg_match('/too many connections/i', $v)) { ///163连接超数量
                 $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
                 return $this->getResults();
             }
