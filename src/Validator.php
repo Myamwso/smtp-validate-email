@@ -295,6 +295,7 @@ class Validator
         fclose($op);
 
         $file_content_temp = file_get_contents($file);
+        unlink($file);
         $file_content = explode("##{$proxy}###", $file_content_temp);
         $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
         foreach ($array as $k => $v) {
