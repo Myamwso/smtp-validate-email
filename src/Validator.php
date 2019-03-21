@@ -295,7 +295,6 @@ class Validator
         fclose($op);
 
         $file_content_temp = file_get_contents($file);
-        unlink($file);
         $file_content = explode("##{$proxy}###", $file_content_temp);
         $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
         foreach ($array as $k => $v) {
@@ -690,14 +689,76 @@ class Validator
         return $this->getResults();
     }
 
+    /**
+     * 校验发送邮箱的账号
+     * @param $mxs
+     * @param $port
+     * @param $mailFrom
+     * @throws NoTimeoutException
+     */
+    public function validateAccount($mxs, $port = 25, $mailFrom = '')
+    {
+        if ($port != 25) {
+            $this->connect_port = $port;
+        }
+        if ($mailFrom) {
+            $this->from_domain = $mailFrom;
+        }
+        $this->clearLog();
+        foreach ($mxs as $host) {
+            try {
+                $this->connect($host);
+                if ($this->connected()) {
+                    break;
+                }
+            } catch (NoConnectionException $e) {
+                return [false, $e->getMessage()];
+            } catch (TimeoutException $e) {
+                return [false, $e->getMessage()];
+            } catch (NoResponseException $e) {
+                return [false, $e->getMessage()];
+            } catch (UnexpectedResponseException $e) {
+                return [false, $e->getMessage()];
+            }
+        }
+
+        try { ///消费掉连接的socket返回
+            $this->expect(self::SMTP_CONNECT_SUCCESS, $this->command_timeouts['connected']);
+        } catch (\Exception $e){
+            return [false, $e->getMessage()];
+        }
+
+        if ($this->connected()) {
+            try {
+                $message = $this->ehlo();
+                if ($this->ehlo()) {
+                    // try issuing MAIL FROM
+                    if (!$this->mail($mailFrom)) {
+                        // MAIL FROM not accepted, we can't talk
+                        return [true, '账号可用'];
+                    } else {
+                        return [true, '账号不可用'];
+                    }
+                }
+            } catch (\Exception $e){
+                return [false, $e->getMessage()];
+            }
+        } else {
+            return [false, "无法连接远程mx主机"];
+        }
+    }
+
 
     /**
      * 校验邮局连通性
      * @param $mxs
      * @throws NoTimeoutException
      */
-    public function validateDomain($mxs)
+    public function validateDomain($mxs, $port = 25)
     {
+        if ($port != 25) {
+            $this->connect_port = $port;
+        }
         $this->clearLog();
         foreach ($mxs as $host) {
             try {
