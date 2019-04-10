@@ -357,6 +357,8 @@ class Validator
             }
         }
 
+        unlink($file);
+
         //获取未知的错误
         if (empty($this->results)) {
             $unkownError = $mailRecordLog.'unkownError.log';
