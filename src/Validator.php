@@ -297,6 +297,7 @@ class Validator
         $file_content_temp = file_get_contents($file);
         $file_content = explode("##{$proxy}###", $file_content_temp);
         $array = explode(PHP_EOL, $file_content[count($file_content)-1]);
+		@unlink($file);
         foreach ($array as $k => $v) {
             if (preg_match('/too many connections/i', $v)) { ///163连接超数量
                 $this->setDomainResults($this->users, $this->usrsDomains, $this->no_comm_is_valid, $v);
@@ -357,7 +358,6 @@ class Validator
             }
         }
 
-        unlink($file);
         //获取未知的错误
         if (empty($this->results)) {
             $unkownError = $mailRecordLog.'unkownError.log';
